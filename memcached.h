@@ -308,6 +308,7 @@ struct settings {
     int maxconns;
     int port;
     int udpport;
+    //监听地址 eg. 127.0.0.1,192.168.1.1
     char *inter;
     int verbose;
     rel_time_t oldest_live; /* ignore existing items older than this */

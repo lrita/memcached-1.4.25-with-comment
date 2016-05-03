@@ -360,6 +360,7 @@ conn *conn_new(const int sfd, enum conn_states init_state,
     c = conns[sfd];
 
     if (NULL == c) {
+        //只在该sfd位置的conns第一次新建时分配，以后会缓存起来复用。
         if (!(c = (conn *)calloc(1, sizeof(conn)))) {
             STATS_LOCK();
             stats.malloc_fails++;
@@ -540,6 +541,7 @@ static void conn_cleanup(conn *c) {
 /*
  * Frees a connection.
  */
+//只在conn_new失败时调用
 void conn_free(conn *c) {
     if (c) {
         assert(c != NULL);
@@ -565,6 +567,7 @@ void conn_free(conn *c) {
     }
 }
 
+//链接关闭时，清理数据
 static void conn_close(conn *c) {
     assert(c != NULL);
 
@@ -580,6 +583,7 @@ static void conn_close(conn *c) {
     conn_set_state(c, conn_closed);
     close(c->sfd);
 
+    //唤醒可能被停止的accept
     pthread_mutex_lock(&conn_lock);
     allow_new_conns = true;
     pthread_mutex_unlock(&conn_lock);
@@ -4066,6 +4070,8 @@ static void drive_machine(conn *c) {
 
         switch(c->state) {
         case conn_listening:
+            //当前conn为Listen的TCP端口时，执行conn_listening内的逻辑，accept之后，调用dispatch_conn_new将
+            //新增链接发送到工作线程上去。
             addrlen = sizeof(addr);
 #ifdef HAVE_ACCEPT4
             if (use_accept4) {
@@ -4086,6 +4092,9 @@ static void drive_machine(conn *c) {
                     /* these are transient, so don't log anything */
                     stop = true;
                 } else if (errno == EMFILE) {
+                    //系统默认最大文件描述付不够用时，报Too many open files错误时，暂停新建链接
+                    //accept_new_conns被调用时，会注册一个定时器，每10ms调用一次maxconns_handler
+                    //检查是否可以恢复accept
                     if (settings.verbose > 0)
                         fprintf(stderr, "Too many open connections\n");
                     accept_new_conns(false);
@@ -4104,6 +4113,7 @@ static void drive_machine(conn *c) {
                 }
             }
 
+            //当开启-o maxconns_fast时，当新增链接大于最大链接数时，快速拒绝新增链接
             if (settings.maxconns_fast &&
                 stats.curr_conns + stats.reserved_fds >= settings.maxconns - 1) {
                 str = "ERROR Too many open connections\r\n";
@@ -4381,6 +4391,7 @@ static void drive_machine(conn *c) {
     return;
 }
 
+//链接的事件驱动函数，状态机。
 void event_handler(const int fd, const short which, void *arg) {
     conn *c;
 
@@ -4758,6 +4769,7 @@ static int server_socket_unix(const char *path, int access_mask) {
  * rather than absolute UNIX timestamps, a space savings on systems where
  * sizeof(time_t) > sizeof(unsigned int).
  */
+//记录的是从程序启动到当前的秒数
 volatile rel_time_t current_time;
 static struct event clockevent;
 
@@ -5663,8 +5675,11 @@ int main (int argc, char **argv) {
 
     /* initialize other stuff */
     stats_init();
+    //初始化存储Item的HASH表
     assoc_init(settings.hashpower_init);
+    //创建链接表
     conn_init();
+    //初始化slabclass
     slabs_init(settings.maxbytes, settings.factor, preallocate);
 
     /*
@@ -5678,6 +5693,7 @@ int main (int argc, char **argv) {
     /* start up worker threads if MT mode */
     memcached_thread_init(settings.num_threads, main_base);
 
+    //启动HASH表维护线程，负责HASH表扩容后的迁移工作
     if (start_assoc_maintenance_thread() == -1) {
         exit(EXIT_FAILURE);
     }
@@ -5698,11 +5714,13 @@ int main (int argc, char **argv) {
     }
 
     /* initialise clock event */
+    //启动一个精度为秒的定时刷新当前秒数的计时器，缓存一个当前时间，减少系统调用。
     clock_handler(0, 0, 0);
 
     /* create unix mode sockets after dropping privileges */
     if (settings.socketpath != NULL) {
         errno = 0;
+        //创建AF_UNIX socket、bind、listen，并且把读事件加入main_base循环，开始监听。
         if (server_socket_unix(settings.socketpath,settings.access)) {
             vperror("failed to listen on UNIX socket: %s", settings.socketpath);
             exit(EX_OSERR);
@@ -5728,6 +5746,7 @@ int main (int argc, char **argv) {
         }
 
         errno = 0;
+        //创建AF_INET socket、bind、listen，并且把读事件加入main_base循环，开始监听。
         if (settings.port && server_sockets(settings.port, tcp_transport,
                                            portnumber_file)) {
             vperror("failed to listen on TCP port %d", settings.port);

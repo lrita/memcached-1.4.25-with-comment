@@ -75,6 +75,7 @@ void assoc_init(const int hashtable_init) {
     STATS_UNLOCK();
 }
 
+//根据Key来查找存在的Item
 item *assoc_find(const char *key, const size_t nkey, const uint32_t hv) {
     item *it;
     unsigned int oldbucket;
@@ -170,6 +171,11 @@ int assoc_insert(item *it, const uint32_t hv) {
 
     pthread_mutex_lock(&hash_items_counter_lock);
     hash_items++;
+    /*
+     * 当哈希表中item的数量达到了哈希表表长的1.5倍时，那么就会扩展哈希表增大哈希表的表长。
+     * memcached在插入一个item时会检查当前的item总数是否达到了哈希表表长的1.5倍。由于item
+     * 的哈希值是比较均匀的，所以平均来说每个桶的冲突链长度大概就是1.5个节点。
+     */
     if (! expanding && hash_items > (hashsize(hashpower) * 3) / 2) {
         assoc_start_expand();
     }
@@ -207,6 +213,10 @@ static volatile int do_run_maintenance_thread = 1;
 #define DEFAULT_HASH_BULK_MOVE 1
 int hash_bulk_move = DEFAULT_HASH_BULK_MOVE;
 
+/*
+ * 迁移线程被创建后会进入休眠状态(通过等待条件变量)，当worker线程插入item后，
+ * 发现需要扩展哈希表就会调用assoc_start_expand函数唤醒这个迁移线程。
+ */
 static void *assoc_maintenance_thread(void *arg) {
 
     mutex_lock(&maintenance_lock);
@@ -276,6 +286,13 @@ static void *assoc_maintenance_thread(void *arg) {
 
 static pthread_t maintenance_tid;
 
+/*
+ * 扩展哈希表有一个很大的问题：扩展后哈希表的长度变了，item哈希后的位置也是会跟着变化
+ * 的(回忆一下memcached是怎么根据键值的哈希值确定桶的位置的)。所以如果要扩展哈希表，那
+ * 么就需要对哈希表中所有的item都要重新计算哈希值得到新的哈希位置(桶位置)，然后把item
+ * 迁移到新的桶上。对所有的item都要做这样的处理，所以这必然是一个耗时的操作。 后文会把
+ * 这个操作称为数据迁移。
+ */
 int start_assoc_maintenance_thread() {
     int ret;
     char *env = getenv("MEMCACHED_HASH_BULK_MOVE");

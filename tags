@@ -118,8 +118,8 @@ CRAWLER_RUNNING	items.h	/^    CRAWLER_OK=0, CRAWLER_RUNNING, CRAWLER_BADCLASS, C
 CYGPATH_W	doc/Makefile	/^CYGPATH_W = echo$/;"	kind:macro
 DATA_BUFFER_SIZE	memcached.h	32;"	kind:macro
 DEBUG_REFCNT	items.c	132;"	kind:macro	file:
-DEFAULT_HASH_BULK_MOVE	assoc.c	207;"	kind:macro	file:
-DEFAULT_SLAB_BULK_CHECK	slabs.c	495;"	kind:macro	file:
+DEFAULT_HASH_BULK_MOVE	assoc.c	208;"	kind:macro	file:
+DEFAULT_SLAB_BULK_CHECK	slabs.c	504;"	kind:macro	file:
 DEFS	doc/Makefile	/^DEFS = -DHAVE_CONFIG_H$/;"	kind:macro
 DELTA_ITEM_CAS_MISMATCH	memcached.h	/^    OK, NON_NUMERIC, EOM, DELTA_ITEM_NOT_FOUND, DELTA_ITEM_CAS_MISMATCH$/;"	kind:enumerator	enum:delta_result_type
 DELTA_ITEM_NOT_FOUND	memcached.h	/^    OK, NON_NUMERIC, EOM, DELTA_ITEM_NOT_FOUND, DELTA_ITEM_CAS_MISMATCH$/;"	kind:enumerator	enum:delta_result_type
@@ -185,13 +185,13 @@ IS_ASCII	t/udp.t	/^use constant IS_ASCII         => 0;$/;"	kind:constant
 IS_BINARY	t/udp.t	/^use constant IS_BINARY        => 1;$/;"	kind:constant
 IS_UDP	memcached.h	202;"	kind:macro
 ITEMS_PER_ALLOC	thread.c	17;"	kind:macro	file:
-ITEM_ACTIVE	memcached.h	362;"	kind:macro
-ITEM_CAS	memcached.h	354;"	kind:macro
-ITEM_FETCHED	memcached.h	360;"	kind:macro
-ITEM_LINKED	memcached.h	353;"	kind:macro
+ITEM_ACTIVE	memcached.h	363;"	kind:macro
+ITEM_CAS	memcached.h	355;"	kind:macro
+ITEM_FETCHED	memcached.h	361;"	kind:macro
+ITEM_LINKED	memcached.h	354;"	kind:macro
 ITEM_LIST_HIGHWAT	memcached.h	55;"	kind:macro
 ITEM_LIST_INITIAL	memcached.h	42;"	kind:macro
-ITEM_SLABBED	memcached.h	357;"	kind:macro
+ITEM_SLABBED	memcached.h	358;"	kind:macro
 ITEM_UPDATE_INTERVAL	memcached.h	71;"	kind:macro
 ITEM_clsid	memcached.h	114;"	kind:macro
 ITEM_data	memcached.h	106;"	kind:macro
@@ -707,7 +707,7 @@ __anon6::suffix_cache	memcached.h	/^    cache_t *suffix_cache;      \/* suffix c
 __anon6::thread_id	memcached.h	/^    pthread_t thread_id;        \/* unique ID of this thread *\/$/;"	kind:member	struct:__anon6	access:public
 __anon7::base	memcached.h	/^    struct event_base *base;    \/* libevent handle this thread uses *\/$/;"	kind:member	struct:__anon7	typeref:struct:__anon7::event_base	access:public
 __anon7::thread_id	memcached.h	/^    pthread_t thread_id;        \/* unique ID of this thread *\/$/;"	kind:member	struct:__anon7	access:public
-__builtin_expect	memcached.h	621;"	kind:macro
+__builtin_expect	memcached.h	622;"	kind:macro
 __gcc_attribute__	util.h	21;"	kind:macro
 __gcc_attribute__	util.h	23;"	kind:macro
 __need_IOV_MAX	memcached.c	34;"	kind:macro	file:
@@ -1191,7 +1191,7 @@ done	memcached.h	/^    uint8_t done;$/;"	kind:member	struct:slab_rebalance	acces
 drive_machine	memcached.c	/^static void drive_machine(conn *c) {$/;"	kind:function	file:	signature:(conn *c)
 drive_machine	memcached.c	/^static void drive_machine(conn *c);$/;"	kind:prototype	file:	signature:(conn *c)
 drop_privileges	memcached.h	/^extern void drop_privileges(void);$/;"	kind:prototype	signature:(void)
-drop_privileges	memcached.h	616;"	kind:macro
+drop_privileges	memcached.h	617;"	kind:macro
 drop_privileges	solaris_priv.c	/^void drop_privileges(void) {$/;"	kind:function	signature:(void)
 dvidir	doc/Makefile	/^dvidir = ${docdir}$/;"	kind:macro
 einval	t/binary.t	/^sub einval {$/;"	kind:subroutine
@@ -1441,7 +1441,7 @@ last_thread	thread.c	/^static int last_thread = -1;$/;"	kind:variable	file:
 length	memcached.c	/^    size_t length;$/;"	kind:member	struct:token_s	file:	access:public
 libdir	doc/Makefile	/^libdir = ${exec_prefix}\/lib$/;"	kind:macro
 libexecdir	doc/Makefile	/^libexecdir = ${exec_prefix}\/libexec$/;"	kind:macro
-likely	memcached.h	624;"	kind:macro
+likely	memcached.h	625;"	kind:macro
 list_mechs	t/binary-sasl.t	/^sub list_mechs {$/;"	kind:subroutine
 list_size	slabs.c	/^    unsigned int list_size; \/* size of prev array *\/$/;"	kind:member	struct:__anon45	file:	access:public
 listen_conn	memcached.c	/^static conn *listen_conn = NULL;$/;"	kind:variable	file:
@@ -1561,8 +1561,8 @@ mt_stats_unlock	stats.c	/^void mt_stats_unlock() { }$/;"	kind:function
 mutex	cache.h	/^    pthread_mutex_t mutex;$/;"	kind:member	struct:__anon1	access:public
 mutex	memcached.h	/^    pthread_mutex_t   mutex;$/;"	kind:member	struct:thread_stats	access:public
 mutex	memcached.h	/^    pthread_mutex_t mutex;$/;"	kind:member	struct:stats	access:public
-mutex_lock	memcached.h	554;"	kind:macro
-mutex_unlock	memcached.h	555;"	kind:macro
+mutex_lock	memcached.h	555;"	kind:macro
+mutex_unlock	memcached.h	556;"	kind:macro
 my_sasl_hostname	sasl_defs.c	/^char my_sasl_hostname[1025];$/;"	kind:variable
 my_sasl_hostname	sasl_defs.h	/^extern char my_sasl_hostname[1025];$/;"	kind:externvar
 name	cache.h	/^    char *name;$/;"	kind:member	struct:__anon1	access:public
@@ -2244,7 +2244,7 @@ udp_set_test	t/udp.t	/^sub udp_set_test {$/;"	kind:subroutine
 udp_transport	memcached.h	/^    udp_transport$/;"	kind:enumerator	enum:network_transport
 udpport	memcached.h	/^    int udpport;$/;"	kind:member	struct:settings	access:public
 udpport	t/lib/MemcachedTest.pm	/^sub udpport { $_[0]{udpport} }$/;"	kind:subroutine
-unlikely	memcached.h	625;"	kind:macro
+unlikely	memcached.h	626;"	kind:macro
 update_event	memcached.c	/^static bool update_event(conn *c, const int new_flags) {$/;"	kind:function	file:	signature:(conn *c, const int new_flags)
 update_event	memcached.c	/^static bool update_event(conn *c, const int new_flags);$/;"	kind:prototype	file:	signature:(conn *c, const int new_flags)
 usage	memcached.c	/^static void usage(void) {$/;"	kind:function	file:	signature:(void)

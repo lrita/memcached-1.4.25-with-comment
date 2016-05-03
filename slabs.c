@@ -25,17 +25,24 @@
 /* powers-of-N allocation structures */
 
 typedef struct {
+    //该级class每个Item的大小
     unsigned int size;      /* sizes of items */
+    //该级class每个slab包含的Item数量
     unsigned int perslab;   /* how many items per slab */
 
+    //空闲的Item的链表，每次释放的Item添加到链表头部。
     void *slots;           /* list of item ptrs */
+    //slots中空闲Item的数量，当sl_curr=0的时候，说明已经没有空闲的item，需要分配一个新的slab
     unsigned int sl_curr;   /* total free items in list */
 
     unsigned int slabs;     /* how many slabs were allocated for this class */
 
+    //存储slab的malloc得到的每一块内存的原始地址，变长数组，根据slab的增加而扩展
     void **slab_list;       /* array of slab pointers */
+    //slab_list的大小，每次该数组扩展后，更新此值，只起边界作用
     unsigned int list_size; /* size of prev array */
 
+    //这级class分配出去的内存大小
     size_t requested; /* The number of requested bytes */
 } slabclass_t;
 
@@ -95,6 +102,7 @@ unsigned int slabs_clsid(const size_t size) {
  * Determines the chunk sizes and initializes the slab class descriptors
  * accordingly.
  */
+// http://blog.csdn.net/initphp/article/details/44888555
 void slabs_init(const size_t limit, const double factor, const bool prealloc) {
     int i = POWER_SMALLEST - 1;
     unsigned int size = sizeof(item) + settings.chunk_size;
@@ -256,6 +264,7 @@ static void *do_slabs_alloc(const size_t size, unsigned int id, unsigned int *to
     }
     /* fail unless we have space at the end of a recently allocated page,
        we have something on our freelist, or we could allocate a new page */
+    //如果sl_curr==0，没有空闲Item时，重新分配一个slab，扩容空闲的Item
     if (p->sl_curr == 0 && flags != SLABS_ALLOC_NO_NEWPAGE) {
         do_slabs_newslab(id);
     }

@@ -19,11 +19,17 @@
 /* An item in the connection queue. */
 typedef struct conn_queue_item CQ_ITEM;
 struct conn_queue_item {
+    //当前链接的fd
     int               sfd;
+    //当前链接初始化的状态(listen、new_cmd)
     enum conn_states  init_state;
+    //当前链接监听的事件
     int               event_flags;
+    //读缓存大小
     int               read_buffer_size;
+    //socket类型tcp、udp、unix
     enum network_transport     transport;
+    //用作cqi_freelist链表指针
     CQ_ITEM          *next;
 };
 
@@ -150,11 +156,13 @@ static void register_thread_initialized(void) {
     pthread_cond_signal(&init_cond);
     pthread_mutex_unlock(&init_lock);
     /* Force worker threads to pile up if someone wants us to */
+    //lock worker_hang_lock是为了阻塞等待pause_threads调用RESUME_WORKER_THREADS
     pthread_mutex_lock(&worker_hang_lock);
     pthread_mutex_unlock(&worker_hang_lock);
 }
 
 /* Must not be called with any deeper locks held */
+//控制各个线程
 void pause_threads(enum pause_thread_types type) {
     char buf[1];
     int i;
@@ -248,6 +256,7 @@ static void cq_push(CQ *cq, CQ_ITEM *item) {
  */
 static CQ_ITEM *cqi_new(void) {
     CQ_ITEM *item = NULL;
+    //如果有缓存的空闲Item，获取一个Item
     pthread_mutex_lock(&cqi_freelist_lock);
     if (cqi_freelist) {
         item = cqi_freelist;
@@ -256,6 +265,7 @@ static CQ_ITEM *cqi_new(void) {
     pthread_mutex_unlock(&cqi_freelist_lock);
 
     if (NULL == item) {
+        //缓存中没有时，一次申请64个Item
         int i;
 
         /* Allocate a bunch of items at once to reduce fragmentation */
@@ -315,6 +325,7 @@ static void create_worker(void *(*func)(void *), void *arg) {
 /*
  * Sets whether or not we accept new connections.
  */
+// 开启/停止accpet新链接，将listen socket的read事件加入/移除mainloop
 void accept_new_conns(const bool do_accept) {
     pthread_mutex_lock(&conn_lock);
     do_accept_new_conns(do_accept);
@@ -383,6 +394,7 @@ static void *worker_libevent(void *arg) {
  * Processes an incoming "handle a new connection" item. This is called when
  * input arrives on the libevent wakeup pipe.
  */
+//工作线程的事件触发回调
 static void thread_libevent_process(int fd, short which, void *arg) {
     LIBEVENT_THREAD *me = arg;
     CQ_ITEM *item;
@@ -394,6 +406,7 @@ static void thread_libevent_process(int fd, short which, void *arg) {
 
     switch (buf[0]) {
     case 'c':
+    //新增链接
     item = cq_pop(me->new_conn_queue);
 
     if (NULL != item) {
@@ -424,6 +437,7 @@ static void thread_libevent_process(int fd, short which, void *arg) {
 }
 
 /* Which thread we assigned a connection to most recently. */
+//该变量只有主线程可以访问，所以不需要加锁
 static int last_thread = -1;
 
 /*
@@ -433,6 +447,7 @@ static int last_thread = -1;
  */
 void dispatch_conn_new(int sfd, enum conn_states init_state, int event_flags,
                        int read_buffer_size, enum network_transport transport) {
+    //获取一个空闲CQ_ITEM
     CQ_ITEM *item = cqi_new();
     char buf[1];
     if (item == NULL) {
@@ -444,6 +459,7 @@ void dispatch_conn_new(int sfd, enum conn_states init_state, int event_flags,
 
     int tid = (last_thread + 1) % settings.num_threads;
 
+    //轮寻获得一个工作线程
     LIBEVENT_THREAD *thread = threads + tid;
 
     last_thread = tid;
@@ -454,9 +470,11 @@ void dispatch_conn_new(int sfd, enum conn_states init_state, int event_flags,
     item->read_buffer_size = read_buffer_size;
     item->transport = transport;
 
+    //将Item加入工作线程的"新增连接"队列的尾部
     cq_push(thread->new_conn_queue, item);
 
     MEMCACHED_CONN_DISPATCH(sfd, thread->thread_id);
+    //通知工作线程，标识c，触发thread_libevent_process
     buf[0] = 'c';
     if (write(thread->notify_send_fd, buf, 1) != 1) {
         perror("Writing to thread notify pipe");
