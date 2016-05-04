@@ -262,6 +262,7 @@ static int add_msghdr(conn *c)
     assert(c != NULL);
 
     if (c->msgsize == c->msgused) {
+        //扩容
         msg = realloc(c->msglist, c->msgsize * 2 * sizeof(struct msghdr));
         if (! msg) {
             STATS_LOCK();
@@ -350,6 +351,9 @@ static const char *prot_text(enum protocol prot) {
     return rv;
 }
 
+//MemCached业务逻辑上的新建连接，fd层面的链接已经在之前建立好了。
+//init_state == conn_listening 时，在主线程被调用，建立listen socket的读事件监听。
+//init_state == conn_new_cmd 时，在工作线程被调用，建立新增链接的读事件监听。
 conn *conn_new(const int sfd, enum conn_states init_state,
                 const int event_flags,
                 const int read_buffer_size, enum network_transport transport,
@@ -567,7 +571,7 @@ void conn_free(conn *c) {
     }
 }
 
-//链接关闭时，清理数据
+//链接关闭时，清理数据，只有TCP链接或者链接异常时调用
 static void conn_close(conn *c) {
     assert(c != NULL);
 
@@ -580,6 +584,7 @@ static void conn_close(conn *c) {
     conn_cleanup(c);
 
     MEMCACHED_CONN_RELEASE(c->sfd);
+    //设置链接状态
     conn_set_state(c, conn_closed);
     close(c->sfd);
 
@@ -603,6 +608,7 @@ static void conn_close(conn *c) {
  * This should only be called in between requests since it can wipe output
  * buffers!
  */
+//TCP连接每次读取新命令之前调用此函数
 static void conn_shrink(conn *c) {
     assert(c != NULL);
 
@@ -610,6 +616,7 @@ static void conn_shrink(conn *c) {
         return;
 
     if (c->rsize > READ_BUFFER_HIGHWAT && c->rbytes < DATA_BUFFER_SIZE) {
+        //c->rbuf过大时，重新分配buffer
         char *newbuf;
 
         if (c->rcurr != c->rbuf)
@@ -626,6 +633,7 @@ static void conn_shrink(conn *c) {
     }
 
     if (c->isize > ITEM_LIST_HIGHWAT) {
+        //Item列表过大时，重置
         item **newbuf = (item**) realloc((void *)c->ilist, ITEM_LIST_INITIAL * sizeof(c->ilist[0]));
         if (newbuf) {
             c->ilist = newbuf;
@@ -839,6 +847,7 @@ static void out_string(conn *c, const char *str) {
         if (settings.verbose > 1)
             fprintf(stderr, ">%d NOREPLY %s\n", c->sfd, str);
         c->noreply = false;
+        //重置状态
         conn_set_state(c, conn_new_cmd);
         return;
     }
@@ -2272,6 +2281,7 @@ static void complete_nread_binary(conn *c) {
     }
 }
 
+//每当准备读入一条新的命令时，重置状态、释放上次命令执行残留的Item
 static void reset_cmd_handler(conn *c) {
     c->cmd = -1;
     c->substate = bin_no_state;
@@ -2281,8 +2291,10 @@ static void reset_cmd_handler(conn *c) {
     }
     conn_shrink(c);
     if (c->rbytes > 0) {
+        //read buffer 中还有剩余数据时，置为conn_parse_cmd状态
         conn_set_state(c, conn_parse_cmd);
     } else {
+        //read buffer 中没有数据时，置为conn_waiting状态
         conn_set_state(c, conn_waiting);
     }
 }
@@ -3430,6 +3442,7 @@ static void process_slabs_automove_command(conn *c, token_t *tokens, const size_
     return;
 }
 
+//解析协议第一行（命令行）
 static void process_command(conn *c, char *command) {
 
     token_t tokens[MAX_TOKENS];
@@ -3456,6 +3469,7 @@ static void process_command(conn *c, char *command) {
         return;
     }
 
+    //按空格切割command字符串，然后匹配command
     ntokens = tokenize_command(command, tokens, MAX_TOKENS);
     if (ntokens >= 3 &&
         ((strcmp(tokens[COMMAND_TOKEN].value, "get") == 0) ||
@@ -3701,6 +3715,7 @@ static int try_read_command(conn *c) {
     }
 
     if (c->protocol == binary_prot) {
+        //二进制协议解析
         /* Do we have the complete packet header? */
         if (c->rbytes < sizeof(c->binary_header)) {
             /* need more data! */
@@ -3767,11 +3782,13 @@ static int try_read_command(conn *c) {
             c->rcurr += sizeof(c->binary_header);
         }
     } else {
+        //ascii text 协议解析
         char *el, *cont;
 
         if (c->rbytes == 0)
             return 0;
 
+        //查找第一行的\n
         el = memchr(c->rcurr, '\n', c->rbytes);
         if (!el) {
             if (c->rbytes > 1024) {
@@ -3788,16 +3805,21 @@ static int try_read_command(conn *c) {
                     (strncmp(ptr, "get ", 4) && strncmp(ptr, "gets ", 5))) {
 
                     conn_set_state(c, conn_closing);
+                    //当第一行大于1024B还未结束时，行首空格>100个，或者不为get、gets命令时，认为该
+                    //链接异常，关闭链接。
                     return 1;
                 }
             }
+            //没有读到第一行的\n，返回0，继续等待读事件。
 
             return 0;
         }
+        //cont为协议的第二行，content行
         cont = el + 1;
         if ((el - c->rcurr) > 1 && *(el - 1) == '\r') {
             el--;
         }
+        //将\r\n置为\0，是的第一行可以当做c style的字符串来操作
         *el = '\0';
 
         assert(cont <= (c->rcurr + c->rbytes));
@@ -3805,6 +3827,7 @@ static int try_read_command(conn *c) {
         c->last_cmd_time = current_time;
         process_command(c, c->rcurr);
 
+        //将read buffer指向content行首
         c->rbytes -= (cont - c->rcurr);
         c->rcurr = cont;
 
@@ -3871,6 +3894,7 @@ static enum try_read_result try_read_network(conn *c) {
     assert(c != NULL);
 
     if (c->rcurr != c->rbuf) {
+        //读取指针不在buffer头部时，将残留的数据移动至buffer头部
         if (c->rbytes != 0) /* otherwise there's nothing to copy */
             memmove(c->rbuf, c->rcurr, c->rbytes);
         c->rcurr = c->rbuf;
@@ -3879,6 +3903,7 @@ static enum try_read_result try_read_network(conn *c) {
     while (1) {
         if (c->rbytes >= c->rsize) {
             if (num_allocs == 4) {
+                //最多realloc 4次
                 return gotdata;
             }
             ++num_allocs;
@@ -3891,6 +3916,7 @@ static enum try_read_result try_read_network(conn *c) {
                     fprintf(stderr, "Couldn't realloc input buffer\n");
                 }
                 c->rbytes = 0; /* ignore what we read */
+                //给链接写入错误输出
                 out_of_memory(c, "SERVER_ERROR out of memory reading request");
                 c->write_and_go = conn_closing;
                 return READ_MEMORY_ERROR;
@@ -4050,6 +4076,7 @@ static enum transmit_result transmit(conn *c) {
     }
 }
 
+//Memcached逻辑层面的链接的事件驱动函数，状态机。
 static void drive_machine(conn *c) {
     bool stop = false;
     int sfd;
@@ -4131,6 +4158,8 @@ static void drive_machine(conn *c) {
             break;
 
         case conn_waiting:
+            //事件循环中，当读取的数据为达到一个处理完成阶段时，进入waiting状态，重新进入事件调度
+            //等待再次出发读事件，读取数据。
             if (!update_event(c, EV_READ | EV_PERSIST)) {
                 if (settings.verbose > 0)
                     fprintf(stderr, "Couldn't update event\n");
@@ -4143,6 +4172,8 @@ static void drive_machine(conn *c) {
             break;
 
         case conn_read:
+            //UDP listen socket的初始状态
+            //TCP socket读取数据的阶段conn_waiting->conn_read
             res = IS_UDP(c->transport) ? try_read_udp(c) : try_read_network(c);
 
             switch (res) {
@@ -4162,6 +4193,7 @@ static void drive_machine(conn *c) {
             break;
 
         case conn_parse_cmd :
+            //read buffer有数据时，进入conn_parse_cmd状态
             if (try_read_command(c) == 0) {
                 /* wee need more data! */
                 conn_set_state(c, conn_waiting);
@@ -4170,6 +4202,9 @@ static void drive_machine(conn *c) {
             break;
 
         case conn_new_cmd:
+            //新建TCP连接还未读取内容时的状态(初始状态)
+            //UDP、TCP socket回复上一条noreply的命令后也进入此状态
+
             /* Only process nreqs at a time to avoid starving other
                connections */
 
@@ -4177,6 +4212,7 @@ static void drive_machine(conn *c) {
             if (nreqs >= 0) {
                 reset_cmd_handler(c);
             } else {
+                //这次IO event达到配置的每次IO处理事件的最大上限，停止处理更多的事件，yield
                 pthread_mutex_lock(&c->thread->stats.mutex);
                 c->thread->stats.conn_yields++;
                 pthread_mutex_unlock(&c->thread->stats.mutex);
@@ -4187,6 +4223,7 @@ static void drive_machine(conn *c) {
                        hack we should just put in a request to write data,
                        because that should be possible ;-)
                     */
+                    //由于上面英文注释的原因，被迫使用socket的写事件来驱动
                     if (!update_event(c, EV_WRITE | EV_PERSIST)) {
                         if (settings.verbose > 0)
                             fprintf(stderr, "Couldn't update event\n");
@@ -4199,6 +4236,7 @@ static void drive_machine(conn *c) {
             break;
 
         case conn_nread:
+            //UDP listen socket的初始状态
             if (c->rlbytes == 0) {
                 complete_nread(c);
                 break;
@@ -4313,6 +4351,7 @@ static void drive_machine(conn *c) {
             break;
 
         case conn_write:
+            //调用out_string等输出函数后，进入写状态
             /*
              * We want to write out a simple response. If we haven't already,
              * assemble it into a msgbuf list (this will be a single-entry
@@ -4370,6 +4409,7 @@ static void drive_machine(conn *c) {
             break;
 
         case conn_closing:
+            //发生错误时，进入conn_closing状态
             if (IS_UDP(c->transport))
                 conn_cleanup(c);
             else
@@ -4391,7 +4431,7 @@ static void drive_machine(conn *c) {
     return;
 }
 
-//链接的事件驱动函数，状态机。
+//Memcached逻辑层面的链接的事件驱动函数，状态机。
 void event_handler(const int fd, const short which, void *arg) {
     conn *c;
 

@@ -150,6 +150,10 @@ typedef void (*ADD_STAT)(const char *key, const uint16_t klen,
 /**
  * Possible states of a connection.
  */
+//MemCached逻辑层面链接状态机的若干阶段
+//UDP socket初始状态为conn_read
+//tcp listen socket的状态一直为conn_listening
+//tcp client连接socket初始状态为conn_new_cmd
 enum conn_states {
     conn_listening,  /**< the socket which listens for connections */
     conn_new_cmd,    /**< Prepare connection for next command */
@@ -438,9 +442,11 @@ struct conn {
     short  which;   /** which events were just triggered */
 
     char   *rbuf;   /** buffer to read commands into */
+
+    //执行try_read_command后，rcurr将指向mc协议的content行首
     char   *rcurr;  /** but if we parsed some already, this is where we stopped */
     int    rsize;   /** total allocated size of rbuf */
-    int    rbytes;  /** how much data, starting from rcur, do we have unparsed */
+    int    rbytes;  /** how much data, starting from rcurr, do we have unparsed */
 
     char   *wbuf;
     char   *wcurr;
@@ -478,9 +484,9 @@ struct conn {
     int    msgbytes;  /* number of bytes in current msg */
 
     item   **ilist;   /* list of items to write out */
-    int    isize;
-    item   **icurr;
-    int    ileft;
+    int    isize;     /* ilist列表长度 */
+    item   **icurr;   /* 当前ilist位置 */
+    int    ileft;     /* ilist上剩余个数 */
 
     char   **suffixlist;
     int    suffixsize;

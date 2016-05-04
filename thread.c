@@ -18,6 +18,7 @@
 
 /* An item in the connection queue. */
 typedef struct conn_queue_item CQ_ITEM;
+//用于在accpet线程与worker线程之间传递fd、state等参数
 struct conn_queue_item {
     //当前链接的fd
     int               sfd;
@@ -426,6 +427,7 @@ static void thread_libevent_process(int fd, short which, void *arg) {
         } else {
             c->thread = me;
         }
+        //释放dispatch_conn_new中分配的CQ_ITEM
         cqi_free(item);
     }
         break;
@@ -737,6 +739,7 @@ void slab_stats_aggregate(struct thread_stats *stats, struct slab_stats *out) {
  * nthreads  Number of worker event handler threads to spawn
  * main_base Event base for main thread
  */
+//程序初始化时调用
 void memcached_thread_init(int nthreads, struct event_base *main_base) {
     int         i;
     int         power;
