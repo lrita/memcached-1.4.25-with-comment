@@ -255,6 +255,23 @@ static void settings_init(void) {
  *
  * Returns 0 on success, -1 on out-of-memory.
  */
+//在链接上发送数据时，调用sendmsg，可以一次性发送多个buffer中的数据，可以减少系统调用的次数、
+//减少CPU压力（send、sendto函数的实现方式是对sendmsg的封装）
+//ssize_t sendmsg(int socket, const struct msghdr *message, int flags);
+//
+//struct msghdr {
+//  void        *msg_name;      /* [XSI] optional address */        //要发送的目的IP，struct sockaddr_in *
+//  socklen_t   msg_namelen;    /* [XSI] size of address */         //sizeof(struct sockaddr_in)
+//  struct      iovec *msg_iov; /* [XSI] scatter/gather array */    //缓存buffer数组指针
+//  int         msg_iovlen;     /* [XSI] # elements in msg_iov */   //msg_iov数组元素个数
+//  void        *msg_control;   /* [XSI] ancillary data, see below */
+//  socklen_t   msg_controllen; /* [XSI] ancillary data buffer len */
+//  int         msg_flags;      /* [XSI] flags on received message */
+//};
+//struct iovec {
+//  void *   iov_base;  /* [XSI] Base address of I/O memory region *///实际buffer数据地址 char *
+//  size_t   iov_len;   /* [XSI] Size of region iov_base points to *///buffer里数据长度
+//};
 static int add_msghdr(conn *c)
 {
     struct msghdr *msg;
@@ -292,6 +309,7 @@ static int add_msghdr(conn *c)
 
     if (IS_UDP(c->transport)) {
         /* Leave room for the UDP header, which we'll fill in later. */
+        //UDP链接头部预留8个字节的request_id，待后面填充
         return add_iov(c, NULL, UDP_HEADER_SIZE);
     }
 
@@ -741,7 +759,7 @@ static int ensure_iov_space(conn *c) {
  *
  * Returns 0 on success, -1 on out-of-memory.
  */
-
+//向msghdr的输出缓冲区iov添加数据
 static int add_iov(conn *c, const void *buf, int len) {
     struct msghdr *m;
     int leftover;
@@ -838,6 +856,7 @@ static int build_udp_headers(conn *c) {
 }
 
 
+//向链接输出一段字符串，一般用于错误输出，会清空之前给该链接添加的所有输出缓冲数据
 static void out_string(conn *c, const char *str) {
     size_t len;
 
@@ -4053,6 +4072,7 @@ static enum transmit_result transmit(conn *c) {
             return TRANSMIT_INCOMPLETE;
         }
         if (res == -1 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+            //写阻塞，等待可写事件
             if (!update_event(c, EV_WRITE | EV_PERSIST)) {
                 if (settings.verbose > 0)
                     fprintf(stderr, "Couldn't update event\n");
@@ -4077,6 +4097,9 @@ static enum transmit_result transmit(conn *c) {
 }
 
 //Memcached逻辑层面的链接的事件驱动函数，状态机。
+//一般TCP链接会经历的状态变化：
+//
+// init -> conn_new_cmd -> conn_waiting -(scoket有数据可读，触发读事件)-> conn_read -(读到足够的数据)-> conn_parse_cmd -(完成命令解析、把数据添加到输出缓存)-> conn_write -> conn_mwrite
 static void drive_machine(conn *c) {
     bool stop = false;
     int sfd;
@@ -4236,7 +4259,6 @@ static void drive_machine(conn *c) {
             break;
 
         case conn_nread:
-            //UDP listen socket的初始状态
             if (c->rlbytes == 0) {
                 complete_nread(c);
                 break;
@@ -4352,6 +4374,7 @@ static void drive_machine(conn *c) {
 
         case conn_write:
             //调用out_string等输出函数后，进入写状态
+            //调用get、gets等命令输出时不进入此状态
             /*
              * We want to write out a simple response. If we haven't already,
              * assemble it into a msgbuf list (this will be a single-entry
@@ -4369,29 +4392,35 @@ static void drive_machine(conn *c) {
             /* fall through... */
 
         case conn_mwrite:
+          //调用get、gets等命令输出时进入此状态
           if (IS_UDP(c->transport) && c->msgcurr == 0 && build_udp_headers(c) != 0) {
             if (settings.verbose > 0)
               fprintf(stderr, "Failed to build UDP headers\n");
             conn_set_state(c, conn_closing);
             break;
           }
+            //调用一次sendmsg
             switch (transmit(c)) {
             case TRANSMIT_COMPLETE:
                 if (c->state == conn_mwrite) {
+                    //命令写完成，释放items
                     conn_release_items(c);
                     /* XXX:  I don't know why this wasn't the general case */
                     if(c->protocol == binary_prot) {
                         conn_set_state(c, c->write_and_go);
                     } else {
+                        //重新进入初始状态
                         conn_set_state(c, conn_new_cmd);
                     }
                 } else if (c->state == conn_write) {
+                    //conn_write状态fall through到transmit的后续处理
                     if (c->write_and_free) {
                         free(c->write_and_free);
                         c->write_and_free = 0;
                     }
                     conn_set_state(c, c->write_and_go);
                 } else {
+                    //unreachable
                     if (settings.verbose > 0)
                         fprintf(stderr, "Unexpected state %d\n", c->state);
                     conn_set_state(c, conn_closing);
@@ -4400,9 +4429,11 @@ static void drive_machine(conn *c) {
 
             case TRANSMIT_INCOMPLETE:
             case TRANSMIT_HARD_ERROR:
+                //error时，UDP重新进入conn_read状态，TCP进入conn_closing状态
                 break;                   /* Continue in state machine. */
 
             case TRANSMIT_SOFT_ERROR:
+                //写阻塞，等待可写事件
                 stop = true;
                 break;
             }
