@@ -50,6 +50,7 @@ void stats_prefix_init() {
  * Cleans up all our previously collected stats. NOTE: the stats lock is
  * assumed to be held when this is called.
  */
+//执行stats reset命令时被调用
 void stats_prefix_clear() {
     int i;
 
@@ -172,6 +173,7 @@ void stats_prefix_record_set(const char *key, const size_t nkey) {
  * Returns stats in textual form suitable for writing to a client.
  */
 /*@null@*/
+//执行stats details dump命令是被调用
 char *stats_prefix_dump(int *length) {
     const char *format = "PREFIX %s get %llu hit %llu set %llu del %llu\r\n";
     PREFIX_STATS *pfs;
