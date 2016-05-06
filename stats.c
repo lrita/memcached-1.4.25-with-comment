@@ -18,6 +18,13 @@
  * fixed-size hash of prefixes; we run the prefixes through the same
  * CRC function used by the cache hashtable.
  */
+/*
+ * 当setting.detail_enabled使能后，根据settings.prefix_delimiter设定的前缀
+ * 分隔符来查找匹配请求命令中的key，当key包含该分隔符时，用分隔符截断key取
+ * 出对应的前缀来，进行相关统计。
+ * 例如，当settings.prefix_delimiter=':'时，请求命令为get user:Tom\r\n时，
+ * 会统计为user的get次数+1
+ */
 typedef struct _prefix_stats PREFIX_STATS;
 struct _prefix_stats {
     char         *prefix;

@@ -62,11 +62,15 @@ static pthread_mutex_t worker_hang_lock;
 static CQ_ITEM *cqi_freelist;
 static pthread_mutex_t cqi_freelist_lock;
 
+//每个Item hash桶的锁
 static pthread_mutex_t *item_locks;
 /* size of the item lock hash table */
+//Item hash 桶的大小
 static uint32_t item_lock_count;
+//Item hash 桶的power(2的多少次方)
 unsigned int item_lock_hashpower;
 #define hashsize(n) ((unsigned long int)1<<(n))
+//hash 桶大小的掩码，经常与key的hash值做&运算，相当于hash值对桶大小取余
 #define hashmask(n) (hashsize(n)-1)
 
 static LIBEVENT_DISPATCHER_THREAD dispatcher_thread;

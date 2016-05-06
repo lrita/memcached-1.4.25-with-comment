@@ -97,6 +97,7 @@
     } \
 }
 
+//获取Item内key的实际地址
 #define ITEM_key(item) (((char*)&((item)->data)) \
          + (((item)->it_flags & ITEM_CAS) ? sizeof(uint64_t) : 0))
 

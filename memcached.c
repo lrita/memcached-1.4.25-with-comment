@@ -3043,6 +3043,7 @@ static inline void process_get_command(conn *c, token_t *tokens, size_t ntokens,
                 i++;
 
             } else {
+                //get key 不存在， miss统计+1
                 pthread_mutex_lock(&c->thread->stats.mutex);
                 c->thread->stats.get_misses++;
                 c->thread->stats.get_cmds++;
@@ -3050,6 +3051,7 @@ static inline void process_get_command(conn *c, token_t *tokens, size_t ntokens,
                 MEMCACHED_COMMAND_GET(c->sfd, key, nkey, -1, 0);
             }
 
+            //循环步进
             key_token++;
         }
 
@@ -3057,12 +3059,14 @@ static inline void process_get_command(conn *c, token_t *tokens, size_t ntokens,
          * If the command string hasn't been fully processed, get the next set
          * of tokens.
          */
+        //如果有很多key时，第一次没有解析完，就再解析一批
         if(key_token->value != NULL) {
             ntokens = tokenize_command(key_token->value, tokens, MAX_TOKENS);
             key_token = tokens;
         }
 
     } while(key_token->value != NULL);
+    //第一行多有token都解析完成
 
     c->icurr = c->ilist;
     c->ileft = i;
@@ -3081,9 +3085,11 @@ static inline void process_get_command(conn *c, token_t *tokens, size_t ntokens,
     */
     if (key_token->value != NULL || add_iov(c, "END\r\n", 5) != 0
         || (IS_UDP(c->transport) && build_udp_headers(c) != 0)) {
+        //异常
         out_of_memory(c, "SERVER_ERROR out of memory writing get response");
     }
     else {
+        //命令执行完成，进入写阶段
         conn_set_state(c, conn_mwrite);
         c->msgcurr = 0;
     }
