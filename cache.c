@@ -92,6 +92,7 @@ void* cache_alloc(cache_t *cache) {
 #ifndef NDEBUG
     if (object != NULL) {
         /* add a simple form of buffer-check */
+        //给buffer的两端uint64_t的位置都填入redzone_pattern
         uint64_t *pre = ret;
         *pre = redzone_pattern;
         ret = pre+1;
@@ -108,6 +109,7 @@ void cache_free(cache_t *cache, void *ptr) {
 
 #ifndef NDEBUG
     /* validate redzone... */
+    //检测buffer两端的uint64_t内的数据是否被修改过，判断是否有越界的问题
     if (memcmp(((char*)ptr) + cache->bufsize - (2 * sizeof(redzone_pattern)),
                &redzone_pattern, sizeof(redzone_pattern)) != 0) {
         raise(SIGABRT);
