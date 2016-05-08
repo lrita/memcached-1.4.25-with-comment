@@ -457,7 +457,9 @@ struct conn {
     enum conn_states  write_and_go;
     void   *write_and_free; /** free this memory after finishing writing */
 
+    //存储command data的buffer，指向item中的内存区域
     char   *ritem;  /** when we read in an item's value, it goes here */
+    //ritem区域中还有多少字节数据没有读到
     int    rlbytes;
 
     /* data for the nread state */
@@ -468,9 +470,11 @@ struct conn {
      * data. The data is read into ITEM_data(item) to avoid extra copying.
      */
 
+    //每次执行一个命令，分配一个Item，存储命令的key、data、suffix等内容
     void   *item;     /* for commands set/add/replace  */
 
     /* data for the swallow state */
+    //Item过大时，没有足够内存存储是，进入conn_swallow阶段，忽略掉sbytes数据
     int    sbytes;    /* how many bytes to swallow */
 
     /* data for the mwrite state */

@@ -2346,11 +2346,13 @@ enum store_item_type do_store_item(item *it, int comm, conn *c, const uint32_t h
 
     if (old_it != NULL && comm == NREAD_ADD) {
         /* add only adds a nonexistent item, but promote to head of LRU */
+        //Item已经存在，add命令失败，但是刷新一下Item LRU时间
         do_item_update(old_it);
     } else if (!old_it && (comm == NREAD_REPLACE
         || comm == NREAD_APPEND || comm == NREAD_PREPEND))
     {
         /* replace only replaces an existing value; don't store */
+        //Item不存在，replace、append、prepend命令失败
     } else if (comm == NREAD_CAS) {
         /* validate cas operation */
         if(old_it == NULL) {
@@ -2364,6 +2366,7 @@ enum store_item_type do_store_item(item *it, int comm, conn *c, const uint32_t h
             // cas validates
             // it and old_it may belong to different classes.
             // I'm updating the stats for the one that's getting pushed out
+            // 符合CAS命令条件
             pthread_mutex_lock(&c->thread->stats.mutex);
             c->thread->stats.slab_stats[ITEM_clsid(old_it)].cas_hits++;
             pthread_mutex_unlock(&c->thread->stats.mutex);
@@ -3095,6 +3098,8 @@ static inline void process_get_command(conn *c, token_t *tokens, size_t ntokens,
     }
 }
 
+//add、set、replace、prepend、append、cas命令
+//int comm为命令enum值
 static void process_update_command(conn *c, token_t *tokens, const size_t ntokens, int comm, bool handle_cas) {
     char *key;
     size_t nkey;
@@ -3107,6 +3112,7 @@ static void process_update_command(conn *c, token_t *tokens, const size_t ntoken
 
     assert(c != NULL);
 
+    //读取tokens是否有noreply，设置conn的noreply标志
     set_noreply_maybe(c, tokens, ntokens);
 
     if (tokens[KEY_TOKEN].length > KEY_MAX_LENGTH) {
@@ -3147,10 +3153,12 @@ static void process_update_command(conn *c, token_t *tokens, const size_t ntoken
         return;
     }
 
+    //记录stats detail
     if (settings.detail_enabled) {
         stats_prefix_record_set(key, nkey);
     }
 
+    //创建一个Item，将key和key的suffix写入Item内存，然后预留vlen长度的空间给command的data
     it = item_alloc(key, nkey, flags, realtime(exptime), vlen);
 
     if (it == 0) {
@@ -3174,9 +3182,11 @@ static void process_update_command(conn *c, token_t *tokens, const size_t ntoken
 
         return;
     }
+    //如果flags标识cas，写入cas_id
     ITEM_set_cas(it, req_cas_id);
 
     c->item = it;
+    //将ritem指针指向Item中给data预留的空间
     c->ritem = ITEM_data(it);
     c->rlbytes = it->nbytes;
     c->cmd = comm;
@@ -4105,7 +4115,10 @@ static enum transmit_result transmit(conn *c) {
 //Memcached逻辑层面的链接的事件驱动函数，状态机。
 //一般TCP链接会经历的状态变化：
 //
-// init -> conn_new_cmd -> conn_waiting -(scoket有数据可读，触发读事件)-> conn_read -(读到足够的数据)-> conn_parse_cmd -(完成命令解析、把数据添加到输出缓存)-> conn_write -> conn_mwrite
+//#init -> conn_new_cmd -> conn_waiting -(scoket有数据可读，触发读事件)-> conn_read -(读到足够的数据)-> 
+// conn_parse_cmd -(完成命令解析、把数据添加到输出缓存)-> conn_write/conn_mwrite
+//#init -> conn_new_cmd -> conn_waiting -(scoket有数据可读，触发读事件)-> conn_read -(读到足够的数据)-> 
+// conn_parse_cmd -(完成命令解析、把数据添加到输出缓存)-> conn_nread -(读取命令的data)-> conn_write/conn_mwrite
 static void drive_machine(conn *c) {
     bool stop = false;
     int sfd;
@@ -4266,6 +4279,7 @@ static void drive_machine(conn *c) {
 
         case conn_nread:
             if (c->rlbytes == 0) {
+                //待读取字节数==0，完成读取阶段
                 complete_nread(c);
                 break;
             }

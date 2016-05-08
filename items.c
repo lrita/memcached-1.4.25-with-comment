@@ -179,6 +179,7 @@ item *do_item_alloc(char *key, const size_t nkey, const int flags,
         if (!settings.lru_maintainer_thread) {
             lru_pull_tail(id, COLD_LRU, 0, false, cur_hv);
         }
+        //slabs_alloc分配的Item refcount = 1
         it = slabs_alloc(ntotal, id, &total_chunks, 0);
         if (settings.expirezero_does_not_evict)
             total_chunks -= noexp_lru_size(id);
@@ -405,6 +406,7 @@ void do_item_update(item *it) {
         if ((it->it_flags & ITEM_LINKED) != 0) {
             it->time = current_time;
             if (!settings.lru_maintainer_thread) {
+                //更新Item移动到lru链表中head
                 item_unlink_q(it);
                 item_link_q(it);
             }

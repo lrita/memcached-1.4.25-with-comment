@@ -27,6 +27,7 @@
 
 static pthread_cond_t maintenance_cond = PTHREAD_COND_INITIALIZER;
 static pthread_mutex_t maintenance_lock = PTHREAD_MUTEX_INITIALIZER;
+//hash_items_counter_lock保护临界区:hash_items
 static pthread_mutex_t hash_items_counter_lock = PTHREAD_MUTEX_INITIALIZER;
 
 typedef  unsigned long  int  ub4;   /* unsigned 4-byte quantities */
@@ -277,6 +278,7 @@ static void *assoc_maintenance_thread(void *arg) {
              * wait times.
              */
             pause_threads(PAUSE_ALL_THREADS);
+            //assoc_expand非线程安全，暂停掉其他线程，保证不会发生冲突
             assoc_expand();
             pause_threads(RESUME_ALL_THREADS);
         }
