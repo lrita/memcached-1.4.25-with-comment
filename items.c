@@ -14,6 +14,24 @@
 #include <assert.h>
 #include <unistd.h>
 
+/*
+ * http://www.lvtao.net/c/628.html
+ * http://blog.csdn.net/luotuo44/article/details/42963793
+ *
+ * Memcached的LRU几种策略：
+ * 1.惰性删除。memcached一般不会主动去清除已经过期或者失效的缓存，当get请求一
+ *     个item的时候，才会去检查item是否失效。当用户设置了一个缓存数据，缓存有
+ *     效期为5分钟。当5分钟时间过后，缓存失效，这个时候Memcached并不会自动去检
+ *     查当前的Item是否过期。当客户端再次来请求这个数据的时候，才会去检查缓存
+ *     是否失效了，如果失效则会去清除这个数据。
+ * 2.flush命令。flush设置settings.oldest_live，惰性删除时，判断oldest_live是否
+ *     需要删除缓存。
+ * 3.创建Item的时候检查。Memcached会在创建ITEM的时候去LRU的链表尾部开始检查，
+ *     是否有失效的ITEM，如果没有的话就重新创建。
+ * 4.LRU爬虫。memcached默认是关闭LRU爬虫的。LRU爬虫是一个单独的线程，会去清理
+ *     失效的ITEM。
+ */
+
 /* Forward Declarations */
 static void item_link_q(item *it);
 static void item_unlink_q(item *it);
@@ -31,6 +49,7 @@ typedef struct {
     uint64_t evicted;
     uint64_t evicted_nonzero;
     uint64_t reclaimed;
+    //alloc失败次数
     uint64_t outofmemory;
     uint64_t tailrepairs;
     uint64_t expired_unfetched;
@@ -41,6 +60,7 @@ typedef struct {
     uint64_t moves_to_cold;
     uint64_t moves_to_warm;
     uint64_t moves_within_lru;
+    //进行回收次数
     uint64_t direct_reclaims;
     rel_time_t evicted_time;
 } itemstats_t;
@@ -56,9 +76,11 @@ typedef struct {
     bool run_complete;
 } crawlerstats_t;
 
+//LRU链表
 static item *heads[LARGEST_ID];
 static item *tails[LARGEST_ID];
 static crawler crawlers[LARGEST_ID];
+//每个LEVEL的slabclass的Item的状态
 static itemstats_t itemstats[LARGEST_ID];
 static unsigned int sizes[LARGEST_ID];
 static crawlerstats_t crawlerstats[MAX_NUMBER_OF_SLAB_CLASSES];
@@ -151,6 +173,25 @@ static size_t item_make_header(const uint8_t nkey, const int flags, const int nb
     return sizeof(item) + nkey + *nsuffix + nbytes;
 }
 
+/*
+ * LRU @ alloc
+ *     1.先检查缓存存储空间大小。memcached的命令中会将key的长度和value的长度
+ *     带上，这样就可以计算出item总的占用空间的大小。
+ *     2.通过缓存item的存储空间大小，就可以找到slabs class和slabs class的LRU
+ *     双向链表。
+ *     3.开始尝试分配内存，尝试次数为5次。
+ *     4.尝试分配内存的过程中，会从LRU链表的尾部开始搜索，检查ITEM状态，如果
+ *     item内容为空或者item被其它worker引用锁定等情况，则继续往LRU列表尾部搜索。
+ *     5.如果尝试了5次，从LRU尾部搜索都没有找到符合预期的ITEM，则会slabs_alloc
+ *     方法，申请创建一个新的内存块。
+ *     6.如果从LRU尾部搜索找到符合预期的ITEM（没有锁定和有数据），首先会检查
+ *     ITEM是否已经过了有效期，如果已经过了有效期，则将这个ITEM淘汰，占用该ITEM。
+ *     7.如果ITEM还是有效的，则使用slabs_alloc分配一个新的ITEM，分配成功，则就
+ *     用最新分配的ITEM
+ *     8.如果使用slabs_alloc分配一个新的ITEM，分配失败，则开启了不使用LRU强制
+ *     淘汰，返回ERROR；如果开启了强制淘汰，会将当前LRU链表尾部搜索到的ITEM强
+ *     制进行淘汰（如果ITEM有效期还在或者设置了永久的也会被淘汰）
+ */
 item *do_item_alloc(char *key, const size_t nkey, const int flags,
                     const rel_time_t exptime, const int nbytes,
                     const uint32_t cur_hv) {
@@ -852,6 +893,9 @@ static int lru_pull_tail(const int orig_id, const int cur_lru,
                     do_item_unlink_nolock(search, hv);
                     removed++;
                     if (settings.slab_automove == 2) {
+                        //如果slab_automove=2(默认是1)，这样会导致angry模式，就是只要分配
+                        //失败了，马上就选择一个slab，把这个空间移动到当前slab-class中(不
+                        //会有通过统计信息有选择的移动slab)
                         slabs_reassign(-1, orig_id);
                     }
                 } else if ((search->it_flags & ITEM_ACTIVE) != 0

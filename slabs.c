@@ -217,6 +217,11 @@ static void *get_page_from_global_pool(void) {
 static int do_slabs_newslab(const unsigned int id) {
     slabclass_t *p = &slabclass[id];
     slabclass_t *g = &slabclass[SLAB_GLOBAL_PAGE_POOL];
+    //在分配新slabs时，如果打开reassign的话，每个slab的分配空间都是固定的settings.item_size_max，
+    //因为这个空间如果被分配给其他slab-class时，需要一个统一的大小，如果不打开reassign，这个空间
+    //就认为永远存储size大小的item，那么这个空间可以等于settings.item_size_max，取size*perslab，
+    //因为1M空间在分配给固定size的item时，会对齐，如果1M的空间在最后会不够item时就不分配了，即
+    //size*perslab<=settings.item_size_max
     int len = settings.slab_reassign ? settings.item_size_max
         : p->size * p->perslab;
     char *ptr;
@@ -620,6 +625,7 @@ static int slab_rebalance_move(void) {
 
     s_cls = &slabclass[slab_rebal.s_clsid];
 
+    //slab_bulk_check == 1, 默认每次移除一个Item
     for (x = 0; x < slab_bulk_check; x++) {
         hv = 0;
         hold_lock = NULL;
@@ -628,10 +634,12 @@ static int slab_rebalance_move(void) {
         /* ITEM_FETCHED when ITEM_SLABBED is overloaded to mean we've cleared
          * the chunk for move. Only these two flags should exist.
          */
+        //如果it_flags == (ITEM_SLABBED|ITEM_FETCHED)说明该Item在move中
         if (it->it_flags != (ITEM_SLABBED|ITEM_FETCHED)) {
             /* ITEM_SLABBED can only be added/removed under the slabs_lock */
             if (it->it_flags & ITEM_SLABBED) {
                 /* remove from slab freelist */
+                //如果该Item在slab freelist中，从freelist中移除该Item
                 if (s_cls->slots == it) {
                     s_cls->slots = it->next;
                 }
@@ -645,12 +653,14 @@ static int slab_rebalance_move(void) {
                  * ITEM_SLABBED, but it's had ITEM_LINKED, it must be active
                  * and have the key written to it already.
                  */
+                //如果该Item在使用中，
                 hv = hash(ITEM_key(it), it->nkey);
                 if ((hold_lock = item_trylock(hv)) == NULL) {
                     status = MOVE_LOCKED;
                 } else {
                     refcount = refcount_incr(&it->refcount);
                     if (refcount == 2) { /* item is linked but not busy */
+                        //说明Item原来的引用计数为1，没有其他执行中的命令引用了这个Item
                         /* Double check ITEM_LINKED flag here, since we're
                          * past a memory barrier from the mutex. */
                         if ((it->it_flags & ITEM_LINKED) != 0) {
@@ -730,6 +740,7 @@ static int slab_rebalance_move(void) {
                 s_cls->requested -= ntotal;
             case MOVE_FROM_SLAB:
                 it->refcount = 0;
+                //标记move中
                 it->it_flags = ITEM_SLABBED|ITEM_FETCHED;
 #ifdef DEBUG_SLAB_MOVER
                 memcpy(ITEM_key(it), "deadbeef", 8);
@@ -741,9 +752,11 @@ static int slab_rebalance_move(void) {
                 was_busy++;
                 break;
             case MOVE_PASS:
+                //Item已经被标记为ITEM_SLABBED|ITEM_FETCHED
                 break;
         }
 
+        //步进
         slab_rebal.slab_pos = (char *)slab_rebal.slab_pos + s_cls->size;
         if (slab_rebal.slab_pos >= slab_rebal.slab_end)
             break;
@@ -752,12 +765,14 @@ static int slab_rebalance_move(void) {
     if (slab_rebal.slab_pos >= slab_rebal.slab_end) {
         /* Some items were busy, start again from the top */
         if (slab_rebal.busy_items) {
+            //上次move循环中有因为Item被其他工作占用导致遗漏的情况时，在循环扫描一次
             slab_rebal.slab_pos = slab_rebal.slab_start;
             STATS_LOCK();
             stats.slab_reassign_busy_items += slab_rebal.busy_items;
             STATS_UNLOCK();
             slab_rebal.busy_items = 0;
         } else {
+            //slab中所有item都被move之后，标记done
             slab_rebal.done++;
         }
     }
@@ -851,6 +866,8 @@ static void *slab_rebalance_thread(void *arg) {
 
     while (do_run_slab_rebalance_thread) {
         if (slab_rebalance_signal == 1) {
+            //slab_rebalance_signal == 1 是启动的第一个阶段
+            //确定src中删除开始的slab开始的指针
             if (slab_rebalance_start() < 0) {
                 /* Handle errors with more specifity as required. */
                 slab_rebalance_signal = 0;
@@ -858,10 +875,15 @@ static void *slab_rebalance_thread(void *arg) {
 
             was_busy = 0;
         } else if (slab_rebalance_signal && slab_rebal.slab_start != NULL) {
+            //开始删除src的那个slab item（hash结构，lru链表），每次删除1个item，
+            //函数在while结构中会被重复执行，直到那个slab中item被完全删除成功，
+            //每次删除一个也是为了控制锁的持有时间，毕竟这个锁持有时间越长，就
+            //会导致hash结构插入操作等待锁的时间变长
             was_busy = slab_rebalance_move();
         }
 
         if (slab_rebal.done) {
+            //如果已经删除完毕，开始把slab_rebal中的空间给dest，这个空间来源于上部删除的src的空间
             slab_rebalance_finish();
         } else if (was_busy) {
             /* Stuck waiting for some items to unlock, so slow down a bit
@@ -897,6 +919,7 @@ static int slabs_reassign_pick_any(int dst) {
     return -1;
 }
 
+//src是失败次数没有，或者很平均的那个slab-class id，dest是那些分配失败次数骤增的slab-class id
 static enum reassign_result_type do_slabs_reassign(int src, int dst) {
     if (slab_rebalance_signal != 0)
         return REASSIGN_RUNNING;
@@ -926,6 +949,7 @@ static enum reassign_result_type do_slabs_reassign(int src, int dst) {
     return REASSIGN_OK;
 }
 
+//外部接口:启动slab rebalance
 enum reassign_result_type slabs_reassign(int src, int dst) {
     enum reassign_result_type ret;
     if (pthread_mutex_trylock(&slabs_rebalance_lock) != 0) {
@@ -947,6 +971,20 @@ void slabs_rebalancer_resume(void) {
 
 static pthread_t rebalance_tid;
 
+/*
+ * 在memcached启动了很长时间，如果内存都分配给了100byte的slab-class，如果想要在分配
+ * 200byte的item，那么200byte的slab-class分配slab，就会导致分配失败。如果想要分配成
+ * 功，就需要从那个100byte的slab-class中，牺牲1个slab，把它的空间重新分配给200byte的
+ * slab-class，那么这样有了新的空间就能把这个空间切割成200byte的slab，使得分配200byte
+ * 的item成功。
+ * Memcached通过2个后台线程实现这样的功能的。在分配item时分配slab失败会生成每个slab
+ * 分配次数的统计信息。然后两个后台线程1个负责slab之间的移动工作，1个负责分析slab失败
+ * 的统计信息，来计算出在连续几次周期中哪个slab分配失败的次数最低和最高，那么应该分配
+ * 失败最高的那个slab-class需要更多的slab来存储item，需要那个slab分配失败最低的那个
+ * slab-class牺牲一个slab，把这个空间重新分配空间给那个分配失败高的slab-class，这两个
+ * 后台线程通过信号量协同工作。
+ * slab_rebalance_thread负责slab-class中slab的搬移工作，lru_maintainer_thread负责扫描。
+ */
 int start_slab_maintenance_thread(void) {
     int ret;
     slab_rebalance_signal = 0;

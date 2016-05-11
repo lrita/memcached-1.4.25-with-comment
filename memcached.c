@@ -107,6 +107,7 @@ time_t process_started;     /* when the process was started */
 conn **conns;
 
 struct slab_rebalance slab_rebal;
+//slab rebalance状态标识位0-停止，1-启动，2-
 volatile int slab_rebalance_signal;
 
 /** file scope variables **/
