@@ -396,6 +396,12 @@ typedef struct _stritem {
     /* then data with terminating \r\n (no terminating null; it's binary!) */
 } item;
 
+// 这个结构体和item结构体长得很像,是伪item结构体，用于LRU爬虫
+// memcached为了实现随机访问，使用了一个很巧妙的方法。它在LRU队列尾部插入一个伪item，
+// 然后驱动这个伪item向队列头部前进，每次前进一位。这个伪item是全局变量，LRU爬虫线程
+// 无须从LRU队列头部或者尾部遍历就可以直接访问这个伪item。通过这个伪item的next和prev
+// 指针，就可以访问真正的item。于是，LRU爬虫线程无需遍历就可以直接访问LRU队列中间的某
+// 一个item。
 typedef struct {
     struct _stritem *next;
     struct _stritem *prev;

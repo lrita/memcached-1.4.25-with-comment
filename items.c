@@ -36,6 +36,7 @@
 static void item_link_q(item *it);
 static void item_unlink_q(item *it);
 
+//LRUd队列状态转移：http://blog.csdn.net/mdj67887500/article/details/47111105
 #define HOT_LRU 0
 #define WARM_LRU 64
 #define COLD_LRU 128
@@ -805,6 +806,7 @@ static int lru_pull_tail(const int orig_id, const int cur_lru,
         next_it = search->prev;
         if (search->nbytes == 0 && search->nkey == 0 && search->it_flags == 1) {
             /* We are a crawler, ignore it. */
+            // 该Item是crawler加入的假Item
             tries++;
             continue;
         }
@@ -879,8 +881,10 @@ static int lru_pull_tail(const int orig_id, const int cur_lru,
             case COLD_LRU:
                 it = search; /* No matter what, we're stopping */
                 if (do_evict) {
+                    //强制淘汰老数据
                     if (settings.evict_to_free == 0) {
                         /* Don't think we need a counter for this. It'll OOM.  */
+                        //设置内存不够时，不淘汰老数据，直接报错
                         break;
                     }
                     itemstats[id].evicted++;
@@ -890,6 +894,7 @@ static int lru_pull_tail(const int orig_id, const int cur_lru,
                     if ((search->it_flags & ITEM_FETCHED) == 0) {
                         itemstats[id].evicted_unfetched++;
                     }
+                    //refcount--，配合函数末尾的remove会将此Item移除掉
                     do_item_unlink_nolock(search, hv);
                     removed++;
                     if (settings.slab_automove == 2) {
@@ -920,6 +925,7 @@ static int lru_pull_tail(const int orig_id, const int cur_lru,
             it->slabs_clsid |= move_to_lru;
             item_link_q(it);
         }
+        //refcount--
         do_item_remove(it);
         item_trylock_unlock(hold_lock);
     }
@@ -1278,6 +1284,8 @@ static void item_crawler_evaluate(item *search, uint32_t hv, int i) {
     }
 }
 
+// LRU_CRAWLER 线程函数
+// 强制清除过期失效的item，不再占据哈希表和LRU队列的空间并归还给slabs
 static void *item_crawler_thread(void *arg) {
     int i;
     int crawls_persleep = settings.crawls_persleep;
@@ -1299,6 +1307,7 @@ static void *item_crawler_thread(void *arg) {
                 continue;
             }
             pthread_mutex_lock(&lru_locks[i]);
+            // 使LRU中的crawler假节点向LRU队列的head前进
             search = crawler_crawl_q((item *)&crawlers[i]);
             if (search == NULL ||
                 (crawlers[i].remaining && --crawlers[i].remaining < 1)) {
@@ -1306,6 +1315,7 @@ static void *item_crawler_thread(void *arg) {
                     fprintf(stderr, "Nothing left to crawl for %d\n", i);
                 crawlers[i].it_flags = 0;
                 crawler_count--;
+                //crawler遍历完成了一次LRU队列，将假Item从LRU队列中移除
                 crawler_unlink_q((item *)&crawlers[i]);
                 pthread_mutex_unlock(&lru_locks[i]);
                 pthread_mutex_lock(&lru_crawler_stats_lock);
@@ -1435,6 +1445,7 @@ static int do_lru_crawler_start(uint32_t id, uint32_t remaining) {
             crawlers[sid].time = 0;
             crawlers[sid].remaining = remaining;
             crawlers[sid].slabs_clsid = sid;
+            // 将假Item加入LRU队列尾部
             crawler_link_q((item *)&crawlers[sid]);
             crawler_count++;
             starts++;
@@ -1472,17 +1483,24 @@ static int lru_crawler_start(uint32_t id, uint32_t remaining) {
  * sid.
  * Also only clear the crawlerstats once per sid.
  */
+// 当客户端使用命令lru_crawler crawl <classid,classid,classid|all>时，  
+// worker线程就会调用本函数,并将命令的第二个参数作为本函数的参数
 enum crawler_result_type lru_crawler_crawl(char *slabs) {
     char *b = NULL;
     uint32_t sid = 0;
     int starts = 0;
     uint8_t tocrawl[MAX_NUMBER_OF_SLAB_CLASSES];
+    //LRU爬虫线程进行清理的时候，会锁上lru_crawler_lock。直到完成所有  
+    //的清理任务才会解锁。所以客户端的前一个清理任务还没结束前，不能  
+    //再提交另外一个清理任务
     if (pthread_mutex_trylock(&lru_crawler_lock) != 0) {
         return CRAWLER_RUNNING;
     }
 
     /* FIXME: I added this while debugging. Don't think it's needed? */
     memset(tocrawl, 0, sizeof(uint8_t) * MAX_NUMBER_OF_SLAB_CLASSES);
+    //解析命令，如果命令要求对某一个LRU队列进行清理，那么就在tocrawl数组  
+    //对应元素赋值1作为标志
     if (strcmp(slabs, "all") == 0) {
         for (sid = 0; sid < MAX_NUMBER_OF_SLAB_CLASSES; sid++) {
             tocrawl[sid] = 1;
@@ -1502,10 +1520,12 @@ enum crawler_result_type lru_crawler_crawl(char *slabs) {
     }
 
     for (sid = POWER_SMALLEST; sid < MAX_NUMBER_OF_SLAB_CLASSES; sid++) {
+        // 根据命令的标识将要清理的队列加入crwaler计划，给指定的LRU队列加入crawler的假节点
         if (tocrawl[sid])
             starts += do_lru_crawler_start(sid, settings.lru_crawler_tocrawl);
     }
     if (starts) {
+        // 通知crawler线程开始工作
         pthread_cond_signal(&lru_crawler_cond);
         pthread_mutex_unlock(&lru_crawler_lock);
         return CRAWLER_OK;

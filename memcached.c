@@ -5280,6 +5280,7 @@ int main (int argc, char **argv) {
     setbuf(stderr, NULL);
 
     /* process arguments */
+    // 参数含义：http://my.oschina.net/liuxd/blog/62212
     while (-1 != (c = getopt(argc, argv,
           "a:"  /* access mask for unix socket */
           "A"  /* enable admin shutdown commannd */
