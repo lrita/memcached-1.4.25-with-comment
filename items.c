@@ -1045,6 +1045,7 @@ static pthread_t lru_maintainer_tid;
 #define MAX_LRU_MAINTAINER_SLEEP 1000000
 #define MIN_LRU_MAINTAINER_SLEEP 1000
 
+// LRU 维护线程
 static void *lru_maintainer_thread(void *arg) {
     int i;
     useconds_t to_sleep = MIN_LRU_MAINTAINER_SLEEP;
@@ -1068,6 +1069,7 @@ static void *lru_maintainer_thread(void *arg) {
             did_moves = lru_maintainer_juggle(lru_maintainer_check_clsid);
             lru_maintainer_check_clsid = 0;
         } else {
+            // always go here
             for (i = POWER_SMALLEST; i < MAX_NUMBER_OF_SLAB_CLASSES; i++) {
                 did_moves += lru_maintainer_juggle(i);
             }
